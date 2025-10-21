@@ -1,0 +1,32 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background with rounded corners -->
+  <rect width="512" height="512" fill="#3A5BA0" rx="80"/>
+
+  <!-- Timer circle -->
+  <circle cx="256" cy="200" r="100" fill="none" stroke="white" stroke-width="12" opacity="0.9"/>
+
+  <!-- Clock hand -->
+  <line x1="256" y1="200" x2="256" y2="130" stroke="white" stroke-width="12" stroke-linecap="round" opacity="0.9"/>
+  <line x1="256" y1="200" x2="310" y2="200" stroke="white" stroke-width="10" stroke-linecap="round" opacity="0.9"/>
+
+  <!-- Center dot -->
+  <circle cx="256" cy="200" r="10" fill="white" opacity="0.9"/>
+
+  <!-- Time blocks below (representing rhythm/schedule) -->
+  <g opacity="0.85">
+    <!-- Block 1 - Work -->
+    <rect x="140" y="330" width="70" height="60" fill="#8FAE8F" rx="8"/>
+    <!-- Block 2 - Chore -->
+    <rect x="220" y="330" width="70" height="60" fill="#D6A656" rx="8"/>
+    <!-- Block 3 - Personal -->
+    <rect x="300" y="330" width="70" height="60" fill="#D58B7C" rx="8"/>
+  </g>
+
+  <!-- Subtle progress arc around circle -->
+  <path d="M 256 90 A 110 110 0 0 1 366 200"
+        fill="none"
+        stroke="white"
+        stroke-width="6"
+        stroke-linecap="round"
+        opacity="0.5"/>
+</svg>
