@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Settings as SettingsIcon, Download, Upload, Info, Check, Plus, X } from 'lucide-react';
+import { Settings as SettingsIcon, Download, Upload, Info, Check, Plus, X, Smartphone, Monitor, Share2 } from 'lucide-react';
 import { UserPrefs, db, Domain, BioRhythmProfile, BioRhythmSegment, Energy, SoundPack } from '../db/database';
 import { getBioRhythmSegments } from '../utils/bioRhythm';
 
@@ -8,9 +8,28 @@ export const Settings = () => {
   const [prefs, setPrefs] = useState<UserPrefs | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [showCustomBioRhythm, setShowCustomBioRhythm] = useState(false);
+  const [showInstallInstructions, setShowInstallInstructions] = useState(false);
+  const [deviceType, setDeviceType] = useState<'ios' | 'android' | 'desktop'>('desktop');
+  const [isStandalone, setIsStandalone] = useState(false);
 
   useEffect(() => {
     loadPrefs();
+
+    // Detect device type
+    const userAgent = navigator.userAgent || navigator.vendor || (window as any).opera;
+
+    if (/iPad|iPhone|iPod/.test(userAgent) && !(window as any).MSStream) {
+      setDeviceType('ios');
+    } else if (/android/i.test(userAgent)) {
+      setDeviceType('android');
+    } else {
+      setDeviceType('desktop');
+    }
+
+    // Check if already installed (running in standalone mode)
+    const isStandaloneMode = window.matchMedia('(display-mode: standalone)').matches ||
+                             (window.navigator as any).standalone === true;
+    setIsStandalone(isStandaloneMode);
   }, []);
 
   const loadPrefs = async () => {
@@ -550,6 +569,161 @@ export const Settings = () => {
           </p>
         </div>
       </div>
+
+      {/* Install App */}
+      <div className="bg-white rounded-lg shadow p-6">
+        <h2 className="text-xl font-semibold text-gray-800 mb-4">Install App</h2>
+        {isStandalone ? (
+          <div className="flex items-center gap-3 p-4 bg-green-50 border border-green-200 rounded-lg">
+            <Check size={24} className="text-green-600 flex-shrink-0" />
+            <div>
+              <p className="font-semibold text-green-800">Already Installed!</p>
+              <p className="text-sm text-green-700">You're using Rhythm as an installed app.</p>
+            </div>
+          </div>
+        ) : (
+          <>
+            <p className="text-gray-600 mb-4">
+              Install Rhythm Planner on your device for quick access and a better experience.
+            </p>
+            <button
+              onClick={() => setShowInstallInstructions(true)}
+              className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg font-semibold hover:from-blue-700 hover:to-purple-700 transition-all shadow-lg"
+            >
+              <Smartphone size={20} />
+              Show Install Instructions
+            </button>
+          </>
+        )}
+      </div>
+
+      {/* Install Instructions Modal */}
+      <AnimatePresence>
+        {showInstallInstructions && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 overflow-y-auto" style={{ background: 'rgba(0,0,0,0.5)' }} onClick={() => setShowInstallInstructions(false)}>
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-6 md:p-8 relative max-h-[85vh] overflow-y-auto"
+            >
+              <div className="flex justify-between items-start mb-6">
+                <div>
+                  <div className="text-6xl mb-4">📱</div>
+                  <h2 className="text-3xl font-bold text-gray-800 mb-2">Install for Quick Access</h2>
+                  <p className="text-gray-600">Add Rhythm to your home screen</p>
+                </div>
+                <button
+                  onClick={() => setShowInstallInstructions(false)}
+                  className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  <X size={24} className="text-gray-600" />
+                </button>
+              </div>
+
+              {deviceType === 'ios' && (
+                <div className="p-6 rounded-2xl mb-6 text-left" style={{ background: 'linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%)', border: '3px solid #3b82f6' }}>
+                  <div className="flex items-center gap-3 mb-4">
+                    <Smartphone size={32} color="#1e40af" />
+                    <h3 className="text-xl font-bold" style={{ color: '#1e3a8a' }}>iPhone/iPad Instructions:</h3>
+                  </div>
+                  <ol className="space-y-3 text-sm" style={{ color: '#1e40af' }}>
+                    <li className="flex items-start gap-3">
+                      <span className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold" style={{ backgroundColor: '#3b82f6', color: '#ffffff' }}>1</span>
+                      <span>Tap the <strong>Share button</strong> at the bottom of Safari (square with arrow ⬆️)</span>
+                    </li>
+                    <li className="flex items-start gap-3">
+                      <span className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold" style={{ backgroundColor: '#3b82f6', color: '#ffffff' }}>2</span>
+                      <span>Scroll down and tap <strong>"Add to Home Screen"</strong></span>
+                    </li>
+                    <li className="flex items-start gap-3">
+                      <span className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold" style={{ backgroundColor: '#3b82f6', color: '#ffffff' }}>3</span>
+                      <span>Tap <strong>"Add"</strong> in the top right</span>
+                    </li>
+                    <li className="flex items-start gap-3">
+                      <span className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold" style={{ backgroundColor: '#3b82f6', color: '#ffffff' }}>4</span>
+                      <span>Look for the <strong>Rhythm icon</strong> on your home screen!</span>
+                    </li>
+                  </ol>
+                  <div className="mt-4 p-3 rounded-lg" style={{ backgroundColor: '#eff6ff' }}>
+                    <p className="text-xs font-semibold" style={{ color: '#1e40af' }}>
+                      💡 Tip: The icon will appear with our purple theme and work like a native app!
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {deviceType === 'android' && (
+                <div className="p-6 rounded-2xl mb-6 text-left" style={{ background: 'linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%)', border: '3px solid #10b981' }}>
+                  <div className="flex items-center gap-3 mb-4">
+                    <Smartphone size={32} color="#065f46" />
+                    <h3 className="text-xl font-bold" style={{ color: '#064e3b' }}>Android Instructions:</h3>
+                  </div>
+                  <ol className="space-y-3 text-sm" style={{ color: '#065f46' }}>
+                    <li className="flex items-start gap-3">
+                      <span className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold" style={{ backgroundColor: '#10b981', color: '#ffffff' }}>1</span>
+                      <span>Tap the <strong>menu (⋮)</strong> in the top right of Chrome</span>
+                    </li>
+                    <li className="flex items-start gap-3">
+                      <span className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold" style={{ backgroundColor: '#10b981', color: '#ffffff' }}>2</span>
+                      <span>Select <strong>"Add to Home screen"</strong> or <strong>"Install app"</strong></span>
+                    </li>
+                    <li className="flex items-start gap-3">
+                      <span className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold" style={{ backgroundColor: '#10b981', color: '#ffffff' }}>3</span>
+                      <span>Tap <strong>"Add"</strong> or <strong>"Install"</strong></span>
+                    </li>
+                    <li className="flex items-start gap-3">
+                      <span className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold" style={{ backgroundColor: '#10b981', color: '#ffffff' }}>4</span>
+                      <span>Open from your home screen or app drawer!</span>
+                    </li>
+                  </ol>
+                  <div className="mt-4 p-3 rounded-lg" style={{ backgroundColor: '#ecfdf5' }}>
+                    <p className="text-xs font-semibold" style={{ color: '#065f46' }}>
+                      💡 Tip: Some Android devices show an automatic install banner at the bottom!
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {deviceType === 'desktop' && (
+                <div className="p-6 rounded-2xl mb-6 text-left" style={{ background: 'linear-gradient(135deg, #e0e7ff 0%, #c7d2fe 100%)', border: '3px solid #6366f1' }}>
+                  <div className="flex items-center gap-3 mb-4">
+                    <Monitor size={32} color="#3730a3" />
+                    <h3 className="text-xl font-bold" style={{ color: '#3730a3' }}>Desktop Instructions:</h3>
+                  </div>
+                  <ol className="space-y-3 text-sm" style={{ color: '#4338ca' }}>
+                    <li className="flex items-start gap-3">
+                      <span className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold" style={{ backgroundColor: '#6366f1', color: '#ffffff' }}>1</span>
+                      <span>Look for the <strong>install icon (⊕)</strong> in the address bar (right side)</span>
+                    </li>
+                    <li className="flex items-start gap-3">
+                      <span className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold" style={{ backgroundColor: '#6366f1', color: '#ffffff' }}>2</span>
+                      <span>Click it and select <strong>"Install Rhythm Planner"</strong></span>
+                    </li>
+                    <li className="flex items-start gap-3">
+                      <span className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold" style={{ backgroundColor: '#6366f1', color: '#ffffff' }}>3</span>
+                      <span>The app will open in its own window!</span>
+                    </li>
+                  </ol>
+                  <div className="mt-4 p-3 rounded-lg" style={{ backgroundColor: '#eef2ff' }}>
+                    <p className="text-xs font-semibold" style={{ color: '#4338ca' }}>
+                      💡 Tip: Works in Chrome, Edge, and Brave browsers. Safari on Mac doesn't support PWA installation.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              <button
+                onClick={() => setShowInstallInstructions(false)}
+                className="w-full px-6 py-3 bg-gray-800 text-white rounded-lg font-semibold hover:bg-gray-900 transition-all"
+              >
+                Got It!
+              </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Data Management */}
       <div className="bg-white rounded-lg shadow p-6">
