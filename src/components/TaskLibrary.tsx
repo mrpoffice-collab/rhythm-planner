@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { Task, Domain, Priority, Energy, Recurrence, TaskType, db } from '../db/database';
 import { getDomainColor } from '../utils/domainColors';
+import { sanitizeText } from '../utils/sanitize';
 
 export const TaskLibrary = () => {
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -58,9 +59,21 @@ export const TaskLibrary = () => {
   };
 
   const handleDeleteTask = async (taskId: string) => {
-    if (confirm('Are you sure you want to delete this task?')) {
-      await db.tasks.delete(taskId);
-      loadTasks();
+    if (confirm('Are you sure you want to delete this task? This will also delete all associated sessions and daily plans.')) {
+      try {
+        // Use transaction to ensure atomic deletion
+        await db.transaction('rw', [db.tasks, db.sessions, db.dailyPlanTasks], async () => {
+          // Delete dependent records first
+          await db.sessions.where('taskId').equals(taskId).delete();
+          await db.dailyPlanTasks.where('taskId').equals(taskId).delete();
+          // Then delete the task
+          await db.tasks.delete(taskId);
+        });
+        loadTasks();
+      } catch (error) {
+        console.error('Failed to delete task:', error);
+        alert('Failed to delete task. Please try again.');
+      }
     }
   };
 
@@ -198,8 +211,8 @@ export const TaskLibrary = () => {
                         </span>
                       )}
                     </div>
-                    <h3 className="font-semibold text-gray-800 text-lg mb-1">{task.title}</h3>
-                    {task.notes && <p className="text-sm text-gray-600">{task.notes}</p>}
+                    <h3 className="font-semibold text-gray-800 text-lg mb-1">{sanitizeText(task.title)}</h3>
+                    {task.notes && <p className="text-sm text-gray-600">{sanitizeText(task.notes)}</p>}
                     {task.deadline && (
                       <p className="text-xs text-gray-500 mt-2">
                         Due: {new Date(task.deadline).toLocaleDateString()}
@@ -308,19 +321,64 @@ const TaskModal = ({ task, onClose, onSave }: TaskModalProps) => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (task?.id) {
-      // Update existing task
-      await db.tasks.update(task.id, formData);
-    } else {
-      // Create new task
-      await db.tasks.add({
-        ...formData,
-        id: crypto.randomUUID(),
-        createdAt: new Date().toISOString(),
-      } as Task);
+    // Validation
+    if (!formData.title || formData.title.trim().length === 0) {
+      alert('Task title is required');
+      return;
     }
 
-    onSave();
+    if (formData.title.length > 200) {
+      alert('Task title must be less than 200 characters');
+      return;
+    }
+
+    if (!formData.estimateMins || formData.estimateMins < 1 || formData.estimateMins > 1440) {
+      alert('Estimate must be between 1 and 1440 minutes (24 hours)');
+      return;
+    }
+
+    if (formData.startDate && formData.dueDate) {
+      const start = new Date(formData.startDate);
+      const due = new Date(formData.dueDate);
+      if (start > due) {
+        alert('Start date must be before due date');
+        return;
+      }
+    }
+
+    if (formData.recurrence === 'Weekly' && (!formData.weeklyDay || formData.weeklyDay.length === 0)) {
+      alert('Weekly tasks require at least one day to be selected');
+      return;
+    }
+
+    if (formData.recurrence === 'CustomDays' && (!formData.customRecurrenceDays || formData.customRecurrenceDays.length === 0)) {
+      alert('Custom recurrence requires at least one day to be selected');
+      return;
+    }
+
+    if (formData.sliceSize && (formData.sliceSize < 5 || formData.sliceSize > formData.estimateMins)) {
+      alert(`Slice size must be between 5 minutes and ${formData.estimateMins} minutes (task estimate)`);
+      return;
+    }
+
+    try {
+      if (task?.id) {
+        // Update existing task
+        await db.tasks.update(task.id, formData);
+      } else {
+        // Create new task
+        await db.tasks.add({
+          ...formData,
+          id: crypto.randomUUID(),
+          createdAt: new Date().toISOString(),
+        } as Task);
+      }
+
+      onSave();
+    } catch (error) {
+      console.error('Failed to save task:', error);
+      alert('Failed to save task. Please try again.');
+    }
   };
 
   const domains: Domain[] = ['Work', 'SideHustle', 'Chore', 'Errand', 'Personal', 'Creative'];

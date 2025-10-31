@@ -35,6 +35,7 @@ export const Timer = ({ task, blockDuration, onComplete, onSkip, onClose, curren
   const [currentSegmentIndex, setCurrentSegmentIndex] = useState(0);
   const [timeRemaining, setTimeRemaining] = useState(0); // in seconds
   const [isRunning, setIsRunning] = useState(false);
+  const [isStarting, setIsStarting] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -188,9 +189,11 @@ export const Timer = ({ task, blockDuration, onComplete, onSkip, onClose, curren
   }, []);
 
   const handleStart = async () => {
-    if (!isRunning) {
-      // Unlock audio on user gesture
-      if (bellEnabled && !audioUnlockedRef.current) {
+    if (!isRunning && !isStarting) {
+      setIsStarting(true);
+      try {
+        // Unlock audio on user gesture
+        if (bellEnabled && !audioUnlockedRef.current) {
         const unlocked = await unlockAudio();
         audioUnlockedRef.current = unlocked;
         if (!unlocked) {
@@ -215,21 +218,31 @@ export const Timer = ({ task, blockDuration, onComplete, onSkip, onClose, curren
       sessionIdRef.current = sessionId;
       startTimeRef.current = startTime;
 
-      await db.sessions.add({
-        id: sessionId,
-        taskId: task.id!,
-        blockType: `${task.domain}-${totalDuration}`,
-        startTime,
-        endTime: null,
-        energyNow: currentEnergy,
-        earnedMins: 0,
-        completed: false,
-        skipped: false,
-      });
+      try {
+        await db.sessions.add({
+          id: sessionId,
+          taskId: task.id!,
+          blockType: `${task.domain}-${totalDuration}`,
+          startTime,
+          endTime: null,
+          energyNow: currentEnergy,
+          earnedMins: 0,
+          completed: false,
+          skipped: false,
+        });
+      } catch (error) {
+        console.error('Failed to create session:', error);
+        alert('Failed to start timer session. Please try again.');
+        setIsRunning(false);
+        return;
+      }
 
       // Play focus start sound
       if (bellEnabled && audioUnlockedRef.current) {
         await playSound('focus-start');
+      }
+      } finally {
+        setIsStarting(false);
       }
     }
   };
@@ -254,11 +267,16 @@ export const Timer = ({ task, blockDuration, onComplete, onSkip, onClose, curren
 
     // Update session in database
     if (sessionIdRef.current) {
-      await db.sessions.update(sessionIdRef.current, {
-        endTime: new Date().toISOString(),
-        earnedMins,
-        completed: true,
-      });
+      try {
+        await db.sessions.update(sessionIdRef.current, {
+          endTime: new Date().toISOString(),
+          earnedMins,
+          completed: true,
+        });
+      } catch (error) {
+        console.error('Failed to update session:', error);
+        alert('Warning: Session data may not have been saved properly.');
+      }
     }
 
     // Update task based on type (project vs regular task)
@@ -313,11 +331,15 @@ export const Timer = ({ task, blockDuration, onComplete, onSkip, onClose, curren
 
     // Update session as skipped
     if (sessionIdRef.current) {
-      await db.sessions.update(sessionIdRef.current, {
-        endTime: new Date().toISOString(),
-        earnedMins: 0,
-        skipped: true,
-      });
+      try {
+        await db.sessions.update(sessionIdRef.current, {
+          endTime: new Date().toISOString(),
+          earnedMins: 0,
+          skipped: true,
+        });
+      } catch (error) {
+        console.error('Failed to update skipped session:', error);
+      }
     }
 
     // Increment dread and snooze
@@ -432,14 +454,18 @@ export const Timer = ({ task, blockDuration, onComplete, onSkip, onClose, curren
 
     // Update session as stopped
     if (sessionIdRef.current) {
-      const elapsed = blockDuration * 60 - timeRemaining;
-      const earnedMins = Math.floor(elapsed / 60);
+      try {
+        const elapsed = blockDuration * 60 - timeRemaining;
+        const earnedMins = Math.floor(elapsed / 60);
 
-      await db.sessions.update(sessionIdRef.current, {
-        endTime: new Date().toISOString(),
-        earnedMins,
-        completed: false,
-      });
+        await db.sessions.update(sessionIdRef.current, {
+          endTime: new Date().toISOString(),
+          earnedMins,
+          completed: false,
+        });
+      } catch (error) {
+        console.error('Failed to update stopped session:', error);
+      }
     }
 
     // Clear assignment but don't mark as done
@@ -487,15 +513,15 @@ export const Timer = ({ task, blockDuration, onComplete, onSkip, onClose, curren
   if (isMinimized) {
     return (
       <motion.div
-        initial={{ scale: 0.9, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        exit={{ scale: 0.9, opacity: 0 }}
-        className="fixed rounded-xl shadow-2xl z-[60] cursor-move"
+        initial={{ scale: 0.9, opacity: 0, y: 20 }}
+        animate={{ scale: 1, opacity: 1, y: 0 }}
+        exit={{ scale: 0.9, opacity: 0, y: 20 }}
+        whileHover={{ scale: 1.02, boxShadow: '0 20px 40px rgba(0,0,0,0.2)' }}
+        className="fixed rounded-xl shadow-2xl z-[60] cursor-move backdrop-blur-lg bg-white/95 border border-gray-200/50"
         style={{
           left: position.x,
           top: position.y,
           width: '300px',
-          backgroundColor: 'white',
           borderLeft: `4px solid ${domainColor}`,
           pointerEvents: 'auto'
         }}
@@ -621,13 +647,14 @@ export const Timer = ({ task, blockDuration, onComplete, onSkip, onClose, curren
 
   // Full panel state
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <motion.div
-        initial={{ scale: 0.9, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        exit={{ scale: 0.9, opacity: 0 }}
-        className="bg-white rounded-lg shadow-lg w-full max-w-lg p-4 sm:p-6 lg:p-8 relative max-h-[90vh] overflow-y-auto"
-        style={{ borderTop: `4px solid ${domainColor}` }}
+        initial={{ scale: 0.9, opacity: 0, y: 20 }}
+        animate={{ scale: 1, opacity: 1, y: 0 }}
+        exit={{ scale: 0.9, opacity: 0, y: 20 }}
+        transition={{ type: "spring", duration: 0.5 }}
+        className="bg-gradient-to-br from-white via-white to-gray-50/50 backdrop-blur-xl rounded-2xl shadow-2xl w-full max-w-lg p-4 sm:p-6 lg:p-8 relative max-h-[90vh] overflow-y-auto border border-gray-200/50"
+        style={{ borderTop: `6px solid ${domainColor}`, boxShadow: `0 25px 50px -12px ${domainColor}40` }}
       >
         {/* Header controls */}
         <div className="absolute top-4 right-4 flex items-center gap-2">
@@ -729,25 +756,39 @@ export const Timer = ({ task, blockDuration, onComplete, onSkip, onClose, curren
 
         {/* Circular timer */}
         <div className="relative w-48 h-48 sm:w-56 sm:h-56 lg:w-64 lg:h-64 mx-auto mb-6 sm:mb-8">
-          <svg className="transform -rotate-90 w-full h-full" viewBox="0 0 256 256">
-            {/* Background circle */}
+          <svg className="transform -rotate-90 w-full h-full drop-shadow-lg" viewBox="0 0 256 256">
+            {/* Background circle with gradient */}
+            <defs>
+              <linearGradient id={`gradient-${task.id}`} x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style={{ stopColor: domainColor, stopOpacity: 1 }} />
+                <stop offset="100%" style={{ stopColor: domainColor, stopOpacity: 0.6 }} />
+              </linearGradient>
+              <filter id="glow">
+                <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+                <feMerge>
+                  <feMergeNode in="coloredBlur"/>
+                  <feMergeNode in="SourceGraphic"/>
+                </feMerge>
+              </filter>
+            </defs>
             <circle
               cx="128"
               cy="128"
               r="120"
               stroke="#E5E7EB"
-              strokeWidth="8"
+              strokeWidth="12"
               fill="none"
             />
-            {/* Progress circle */}
+            {/* Progress circle with glow */}
             <motion.circle
               cx="128"
               cy="128"
               r="120"
-              stroke={domainColor}
-              strokeWidth="8"
+              stroke={`url(#gradient-${task.id})`}
+              strokeWidth="12"
               fill="none"
               strokeLinecap="round"
+              filter="url(#glow)"
               style={{
                 strokeDasharray: circumference,
                 strokeDashoffset,
@@ -760,12 +801,21 @@ export const Timer = ({ task, blockDuration, onComplete, onSkip, onClose, curren
           {/* Time display */}
           <div className="absolute inset-0 flex items-center justify-center">
             <div className="text-center">
-              <div className="text-3xl sm:text-4xl lg:text-5xl font-semibold text-gray-800 mb-2">
+              <motion.div
+                className="text-3xl sm:text-4xl lg:text-5xl font-bold bg-gradient-to-br from-gray-800 to-gray-600 bg-clip-text text-transparent mb-2"
+                animate={isRunning ? { scale: [1, 1.02, 1] } : {}}
+                transition={{ duration: 1, repeat: Infinity }}
+              >
                 {formatTime(timeRemaining)}
-              </div>
-              <div className="text-xs sm:text-sm text-gray-500">
+              </motion.div>
+              <motion.div
+                className="text-xs sm:text-sm font-semibold"
+                style={{ color: domainColor }}
+                animate={{ opacity: [0.7, 1, 0.7] }}
+                transition={{ duration: 2, repeat: Infinity }}
+              >
                 {isRunning ? 'In Progress' : isPaused ? 'Paused' : 'Ready to Start'}
-              </div>
+              </motion.div>
             </div>
           </div>
         </div>
@@ -773,67 +823,80 @@ export const Timer = ({ task, blockDuration, onComplete, onSkip, onClose, curren
         {/* Controls */}
         <div className="flex items-center justify-center gap-2 sm:gap-3 flex-wrap">
           {!isRunning && !isPaused && (
-            <button
+            <motion.button
               onClick={handleStart}
-              className="flex items-center justify-center gap-2 px-6 py-3 rounded-lg font-semibold text-white transition-all hover:scale-105 shadow min-h-[48px]"
-              style={{ backgroundColor: domainColor }}
+              disabled={isStarting}
+              whileHover={{ scale: isStarting ? 1 : 1.05, boxShadow: `0 15px 30px ${domainColor}40` }}
+              whileTap={{ scale: isStarting ? 1 : 0.95 }}
+              className="flex items-center justify-center gap-2 px-8 py-3 rounded-xl font-bold text-white transition-all shadow-lg min-h-[48px] disabled:opacity-70 disabled:cursor-not-allowed"
+              style={{ background: `linear-gradient(135deg, ${domainColor} 0%, ${domainColor}dd 100%)` }}
             >
               <Play size={20} />
-              Start Session
-            </button>
+              {isStarting ? 'Starting...' : 'Start Session'}
+            </motion.button>
           )}
 
           {isRunning && (
             <>
-              <button
+              <motion.button
                 onClick={handlePause}
-                className="flex items-center justify-center gap-2 px-4 py-2 bg-gray-700 text-white rounded-lg font-medium hover:bg-gray-800 transition-all shadow text-sm min-h-[44px]"
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                className="flex items-center justify-center gap-2 px-4 py-2 bg-gradient-to-r from-gray-700 to-gray-800 text-white rounded-xl font-semibold hover:from-gray-800 hover:to-gray-900 transition-all shadow-md text-sm min-h-[44px]"
               >
                 <Pause size={16} />
                 <span className="hidden sm:inline">Pause</span>
-              </button>
+              </motion.button>
 
               {getCurrentSegmentType() === 'focus' && (
-                <button
+                <motion.button
                   onClick={handleExtendFocus}
-                  className="flex items-center justify-center gap-1 px-4 py-2 bg-blue-500 text-white rounded-lg font-medium hover:bg-blue-600 transition-all shadow text-sm min-h-[44px]"
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  className="flex items-center justify-center gap-1 px-4 py-2 bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-xl font-semibold hover:from-blue-600 hover:to-blue-700 transition-all shadow-md text-sm min-h-[44px]"
                   title="Add 5 minutes to this focus segment"
                 >
                   +5m
-                </button>
+                </motion.button>
               )}
 
               {getCurrentSegmentType() === 'break' && (
-                <button
+                <motion.button
                   onClick={handleSkipBreak}
-                  className="flex items-center justify-center gap-2 px-4 py-2 bg-green-500 text-white rounded-lg font-medium hover:bg-green-600 transition-all shadow text-sm min-h-[44px]"
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  className="flex items-center justify-center gap-2 px-4 py-2 bg-gradient-to-r from-green-500 to-green-600 text-white rounded-xl font-semibold hover:from-green-600 hover:to-green-700 transition-all shadow-md text-sm min-h-[44px]"
                 >
                   <SkipForward size={16} />
                   <span className="hidden sm:inline">Skip Break</span>
-                </button>
+                </motion.button>
               )}
             </>
           )}
 
           {isPaused && (
-            <button
+            <motion.button
               onClick={handleResume}
-              className="flex items-center justify-center gap-2 px-6 py-3 rounded-lg font-semibold text-white transition-all hover:scale-105 shadow min-h-[48px]"
-              style={{ backgroundColor: domainColor }}
+              whileHover={{ scale: 1.05, boxShadow: `0 15px 30px ${domainColor}40` }}
+              whileTap={{ scale: 0.95 }}
+              className="flex items-center justify-center gap-2 px-8 py-3 rounded-xl font-bold text-white transition-all shadow-lg min-h-[48px]"
+              style={{ background: `linear-gradient(135deg, ${domainColor} 0%, ${domainColor}dd 100%)` }}
             >
               <Play size={20} />
               Resume
-            </button>
+            </motion.button>
           )}
 
           {(isRunning || isPaused) && (
-            <button
+            <motion.button
               onClick={handleSkip}
-              className="flex items-center justify-center gap-2 px-4 py-2 bg-red-500 text-white rounded-lg font-medium hover:bg-red-600 transition-all shadow text-sm min-h-[44px]"
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              className="flex items-center justify-center gap-2 px-4 py-2 bg-gradient-to-r from-red-500 to-red-600 text-white rounded-xl font-semibold hover:from-red-600 hover:to-red-700 transition-all shadow-md text-sm min-h-[44px]"
             >
               <SkipForward size={16} />
               <span className="hidden sm:inline">Not This</span>
-            </button>
+            </motion.button>
           )}
         </div>
 

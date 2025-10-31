@@ -1,21 +1,23 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Play, Briefcase, Home, ShoppingCart, Heart, Palette, Zap, Calendar, Rocket, Sun } from 'lucide-react';
+import { Play, Briefcase, Home, ShoppingCart, Heart, Palette, Zap, Calendar, Rocket, Sun, Moon } from 'lucide-react';
 import { Task, Energy, db, Domain } from '../db/database';
 import { getRecommendedTasks, getTodayMinutes, calculateWeeklyMinutes } from '../utils/taskRecommender';
 import { getDomainColor, getDomainClasses } from '../utils/domainColors';
 import { generateWakeDaySchedule } from '../utils/wakeDayScheduler';
 import { DomainPanel } from './DomainPanel';
 import { getEnergyAtTime, logBioRhythmApplied, calculateDailyEnergyCurve } from '../utils/bioRhythm';
+import { sanitizeText } from '../utils/sanitize';
 
 interface DashboardProps {
   onStartTask: (task: Task, blockDuration: number) => void;
   currentEnergy: Energy;
   onEnergyChange: (energy: Energy) => void;
   onNavigateToView: (view: 'dashboard' | 'today' | 'library' | 'settings') => void;
+  onShowEndOfDay?: () => void;
 }
 
-export const Dashboard = ({ onStartTask, currentEnergy, onEnergyChange, onNavigateToView }: DashboardProps) => {
+export const Dashboard = ({ onStartTask, currentEnergy, onEnergyChange, onNavigateToView, onShowEndOfDay }: DashboardProps) => {
   const [recommendedTasks, setRecommendedTasks] = useState<Task[]>([]);
   const [todayMinutes, setTodayMinutes] = useState(0);
   const [weeklyWorkMinutes, setWeeklyWorkMinutes] = useState(0);
@@ -56,54 +58,70 @@ export const Dashboard = ({ onStartTask, currentEnergy, onEnergyChange, onNaviga
   };
 
   const loadDashboardData = async () => {
-    // Get recommended tasks for current energy
-    const tasks = await getRecommendedTasks(currentEnergy, 60, 5);
-    setRecommendedTasks(tasks);
+    try {
+      // Get recommended tasks for current energy
+      const tasks = await getRecommendedTasks(currentEnergy, 60, 5);
+      setRecommendedTasks(tasks);
 
-    const todayString = new Date().toISOString().split('T')[0];
+      const todayString = new Date().toISOString().split('T')[0];
 
-    // Today count: tasks with assignedDate = today
-    const todayTaskCount = await db.tasks
-      .where('assignedDate')
-      .equals(todayString)
-      .and(task => !task.archived && task.status === 'todo')
-      .count();
-    setTodayBlockCount(todayTaskCount);
+      // Today count: tasks with assignedDate = today
+      const todayTaskCount = await db.tasks
+        .where('assignedDate')
+        .equals(todayString)
+        .and(task => !task.archived && task.status === 'todo')
+        .count();
+      setTodayBlockCount(todayTaskCount);
 
-    // Today minutes: completed sessions today
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
-    const todaySessions = await db.sessions
-      .where('startTime')
-      .above(todayStart.toISOString())
-      .and(session => session.completed === true)
-      .toArray();
-    const todayMins = todaySessions.reduce((sum, s) => sum + (s.earnedMins || 0), 0);
-    setTodayMinutes(todayMins);
+      // Today minutes: completed sessions today
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
 
-    // This week Work: sum of Work domain completed sessions
-    const weekStart = new Date();
-    weekStart.setDate(weekStart.getDate() - weekStart.getDay()); // Start of week (Sunday)
-    weekStart.setHours(0, 0, 0, 0);
+      // Get all sessions and filter in memory to avoid IndexedDB key errors
+      const allSessions = await db.sessions.toArray();
+      const todayStartTime = todayStart.getTime();
 
-    const weekSessions = await db.sessions
-      .where('startTime')
-      .above(weekStart.toISOString())
-      .and(session => session.completed === true)
-      .toArray();
+      const todaySessions = allSessions.filter(session => {
+        if (!session.startTime || !session.completed) return false;
+        const sessionTime = new Date(session.startTime).getTime();
+        return sessionTime >= todayStartTime;
+      });
 
-    // Get Work domain sessions
-    const workTasks = await db.tasks.where('domain').equals('Work').toArray();
-    const workTaskIds = new Set(workTasks.map(t => t.id));
-    const weeklyMins = weekSessions
-      .filter(s => s.taskId && workTaskIds.has(s.taskId))
-      .reduce((sum, s) => sum + (s.earnedMins || 0), 0);
-    setWeeklyWorkMinutes(weeklyMins);
+      const todayMins = todaySessions.reduce((sum, s) => sum + (s.earnedMins || 0), 0);
+      setTodayMinutes(todayMins);
 
-    // Get user prefs
-    const prefs = await db.userPrefs.get(1);
-    if (prefs) {
-      setMaxWeeklyHours(prefs.maxWorkHoursPerWeek);
+      // This week Work: sum of Work domain completed sessions
+      const weekStart = new Date();
+      weekStart.setDate(weekStart.getDate() - weekStart.getDay()); // Start of week (Sunday)
+      weekStart.setHours(0, 0, 0, 0);
+      const weekStartTime = weekStart.getTime();
+
+      const weekSessions = allSessions.filter(session => {
+        if (!session.startTime || !session.completed) return false;
+        const sessionTime = new Date(session.startTime).getTime();
+        return sessionTime >= weekStartTime;
+      });
+
+      // Get Work domain sessions
+      const workTasks = await db.tasks.where('domain').equals('Work').toArray();
+      const workTaskIds = new Set(workTasks.map(t => t.id));
+      const weeklyMins = weekSessions
+        .filter(s => s.taskId && workTaskIds.has(s.taskId))
+        .reduce((sum, s) => sum + (s.earnedMins || 0), 0);
+      setWeeklyWorkMinutes(weeklyMins);
+
+      // Get user prefs
+      const prefs = await db.userPrefs.get(1);
+      if (prefs) {
+        setMaxWeeklyHours(prefs.maxWorkHoursPerWeek);
+      }
+    } catch (error) {
+      console.error('Error loading dashboard data:', error);
+      // Set default values on error
+      setRecommendedTasks([]);
+      setTodayBlockCount(0);
+      setTodayMinutes(0);
+      setWeeklyWorkMinutes(0);
     }
   };
 
@@ -182,6 +200,9 @@ export const Dashboard = ({ onStartTask, currentEnergy, onEnergyChange, onNaviga
         await db.dailyPlanTasks.bulkAdd(result.plannedTasks);
       }
 
+      // Track day start for streak
+      localStorage.setItem('rhythmPlanner_lastDayStart', todayString);
+
       setDayStarted(true);
       setPlanMessage(result.message);
       setTimeout(() => setPlanMessage(null), 5000);
@@ -232,24 +253,26 @@ export const Dashboard = ({ onStartTask, currentEnergy, onEnergyChange, onNaviga
         </div>
 
         <div className="flex flex-col items-start lg:items-end gap-2 w-full lg:w-auto">
-          <label className="text-sm text-gray-600 font-medium">Your Energy Right Now</label>
+          <label className="text-sm text-gray-600 font-semibold">Your Energy Right Now</label>
           <div className="flex gap-2 flex-wrap">
             {energyLevels.map((energy) => (
-              <button
+              <motion.button
                 key={energy}
                 onClick={async () => {
                   onEnergyChange(energy);
                   // Persist energy level to database
                   await db.userPrefs.update(1, { currentEnergy: energy });
                 }}
-                className={`px-4 py-2 rounded-lg font-medium transition-all min-h-[44px] ${
+                whileHover={{ scale: currentEnergy === energy ? 1.05 : 1.03 }}
+                whileTap={{ scale: 0.97 }}
+                className={`px-5 py-2.5 rounded-xl font-semibold transition-all min-h-[44px] shadow-md ${
                   currentEnergy === energy
-                    ? 'bg-gray-800 text-white shadow-md scale-105'
-                    : 'bg-white text-gray-600 hover:bg-gray-100'
+                    ? 'bg-gradient-to-r from-gray-800 to-gray-700 text-white shadow-lg scale-105'
+                    : 'bg-white text-gray-700 hover:bg-gray-50 hover:shadow-lg'
                 }`}
               >
                 {energyEmojis[energy]} {energy}
-              </button>
+              </motion.button>
             ))}
           </div>
         </div>
@@ -266,11 +289,15 @@ export const Dashboard = ({ onStartTask, currentEnergy, onEnergyChange, onNaviga
             <button
               onClick={handleStartMyDay}
               disabled={isGeneratingPlan}
-              className="w-full sm:w-auto flex items-center justify-center gap-3 px-6 sm:px-10 py-4 sm:py-5 bg-orange-600 text-white rounded-2xl font-bold text-lg sm:text-xl hover:bg-orange-700 transition-all shadow-lg transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none min-h-[56px]"
+              className="w-full sm:w-auto flex items-center justify-center gap-3 px-6 sm:px-10 py-4 sm:py-5 rounded-2xl font-bold text-lg sm:text-xl transition-all shadow-lg transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none min-h-[56px]"
+              style={{
+                background: isGeneratingPlan ? '#9ca3af' : 'linear-gradient(to right, #f97316, #fbbf24)',
+                color: '#ffffff'
+              }}
             >
-              <Sun size={24} className="sm:w-7 sm:h-7" />
-              <span>
-                {isGeneratingPlan ? 'Starting Day...' : 'Start My Day'}
+              <Sun size={24} className="sm:w-7 sm:h-7" color="#ffffff" />
+              <span style={{ color: '#ffffff' }}>
+                {isGeneratingPlan ? 'Starting Day...' : '🌅 Start My Day'}
               </span>
             </button>
           </motion.div>
@@ -293,6 +320,26 @@ export const Dashboard = ({ onStartTask, currentEnergy, onEnergyChange, onNaviga
             </span>
           </button>
         </motion.div>
+
+        {dayStarted && onShowEndOfDay && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="w-full sm:w-auto"
+          >
+            <button
+              onClick={onShowEndOfDay}
+              className="w-full sm:w-auto flex items-center justify-center gap-3 px-6 sm:px-10 py-4 sm:py-5 rounded-2xl font-bold text-lg sm:text-xl transition-all shadow-lg transform hover:scale-105 min-h-[56px]"
+              style={{
+                background: 'linear-gradient(to right, #6366f1, #8b5cf6)',
+                color: '#ffffff'
+              }}
+            >
+              <Moon size={24} className="sm:w-7 sm:h-7" color="#ffffff" />
+              <span style={{ color: '#ffffff' }}>🌙 End My Day</span>
+            </button>
+          </motion.div>
+        )}
       </div>
 
       {/* Plan Message */}
@@ -313,21 +360,29 @@ export const Dashboard = ({ onStartTask, currentEnergy, onEnergyChange, onNaviga
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="bg-white rounded-lg shadow p-6 cursor-pointer hover:shadow-lg transition-all"
+          whileHover={{ scale: 1.02, y: -4 }}
+          whileTap={{ scale: 0.98 }}
+          className="bg-gradient-to-br from-white to-blue-50/30 backdrop-blur-sm rounded-xl shadow-lg hover:shadow-xl p-6 cursor-pointer transition-all duration-300 border border-blue-100/50"
           onClick={() => {
             console.log('DASH_CLICK Today');
             onNavigateToView('today');
           }}
           title="Click to view details"
         >
-          <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center justify-between mb-3">
             <h3 className="text-lg font-semibold text-gray-700">Today</h3>
-            <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
-              <Play size={20} className="text-blue-600" />
-            </div>
+            <motion.div
+              className="w-12 h-12 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl flex items-center justify-center shadow-lg"
+              whileHover={{ rotate: 5 }}
+              transition={{ type: "spring", stiffness: 300 }}
+            >
+              <Play size={20} className="text-white" />
+            </motion.div>
           </div>
-          <div className="text-3xl font-bold text-gray-800">{todayBlockCount} tasks</div>
-          <div className="text-gray-600 mt-1">{formatMinutes(todayMinutes)} completed</div>
+          <div className="text-4xl font-bold bg-gradient-to-r from-gray-800 to-gray-600 bg-clip-text text-transparent">
+            {todayBlockCount} <span className="text-2xl">tasks</span>
+          </div>
+          <div className="text-gray-600 mt-2 font-medium">{formatMinutes(todayMinutes)} completed</div>
         </motion.div>
 
         {/* Weekly work hours */}
@@ -335,7 +390,9 @@ export const Dashboard = ({ onStartTask, currentEnergy, onEnergyChange, onNaviga
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.1 }}
-          className="bg-white rounded-lg shadow p-6 cursor-pointer hover:shadow-lg transition-all"
+          whileHover={{ scale: 1.02, y: -4 }}
+          whileTap={{ scale: 0.98 }}
+          className="bg-gradient-to-br from-white to-purple-50/30 backdrop-blur-sm rounded-xl shadow-lg hover:shadow-xl p-6 cursor-pointer transition-all duration-300 border border-purple-100/50"
           onClick={async () => {
             console.log('DASH_CLICK This Week (Work)');
 
@@ -370,21 +427,27 @@ export const Dashboard = ({ onStartTask, currentEnergy, onEnergyChange, onNaviga
           }}
           title="Click to view details"
         >
-          <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center justify-between mb-3">
             <h3 className="text-lg font-semibold text-gray-700">This Week (Work)</h3>
-            <div className="w-10 h-10 bg-work/20 rounded-full flex items-center justify-center">
-              <Briefcase size={20} className="text-work" />
-            </div>
+            <motion.div
+              className="w-12 h-12 rounded-xl flex items-center justify-center shadow-lg"
+              style={{ background: 'linear-gradient(135deg, var(--color-work) 0%, #5575b8 100%)' }}
+              whileHover={{ rotate: -5 }}
+              transition={{ type: "spring", stiffness: 300 }}
+            >
+              <Briefcase size={20} className="text-white" />
+            </motion.div>
           </div>
-          <div className="text-3xl font-bold text-gray-800">
-            {weeklyHoursUsed}h <span className="text-lg text-gray-500">/ {maxWeeklyHours}h</span>
+          <div className="text-4xl font-bold bg-gradient-to-r from-gray-800 to-gray-600 bg-clip-text text-transparent">
+            {weeklyHoursUsed}h <span className="text-2xl text-gray-500">/ {maxWeeklyHours}h</span>
           </div>
-          <div className="mt-3 bg-gray-200 rounded-full h-2 overflow-hidden">
+          <div className="mt-4 bg-gray-200 rounded-full h-3 overflow-hidden shadow-inner">
             <motion.div
               initial={{ width: 0 }}
               animate={{ width: `${weeklyProgress}%` }}
-              className="h-full bg-work rounded-full"
-              transition={{ duration: 0.5, delay: 0.2 }}
+              className="h-full rounded-full shadow-sm"
+              style={{ background: 'linear-gradient(90deg, var(--color-work) 0%, #5575b8 100%)' }}
+              transition={{ duration: 0.8, delay: 0.2, ease: "easeOut" }}
             />
           </div>
         </motion.div>
@@ -394,18 +457,23 @@ export const Dashboard = ({ onStartTask, currentEnergy, onEnergyChange, onNaviga
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.2 }}
-          className="bg-white rounded-lg shadow p-6"
+          whileHover={{ scale: 1.02, y: -4 }}
+          className="bg-gradient-to-br from-white to-amber-50/30 backdrop-blur-sm rounded-xl shadow-lg hover:shadow-xl p-6 transition-all duration-300 border border-amber-100/50"
         >
-          <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center justify-between mb-3">
             <h3 className="text-lg font-semibold text-gray-700">Current Energy</h3>
-            <div className="w-10 h-10 bg-yellow-100 rounded-full flex items-center justify-center">
-              <Zap size={20} className="text-yellow-600" />
-            </div>
+            <motion.div
+              className="w-12 h-12 bg-gradient-to-br from-amber-400 to-amber-500 rounded-xl flex items-center justify-center shadow-lg"
+              animate={{ rotate: [0, 5, -5, 0] }}
+              transition={{ duration: 2, repeat: Infinity, repeatDelay: 1 }}
+            >
+              <Zap size={20} className="text-white" />
+            </motion.div>
           </div>
-          <div className="text-3xl font-bold text-gray-800">
+          <div className="text-4xl font-bold bg-gradient-to-r from-gray-800 to-gray-600 bg-clip-text text-transparent">
             {energyEmojis[currentEnergy]} {currentEnergy}
           </div>
-          <div className="text-gray-600 mt-1">Recommendations updated</div>
+          <div className="text-gray-600 mt-2 font-medium">Recommendations updated</div>
         </motion.div>
       </div>
 
@@ -413,25 +481,30 @@ export const Dashboard = ({ onStartTask, currentEnergy, onEnergyChange, onNaviga
       <div>
         <h2 className="text-xl sm:text-2xl font-semibold text-gray-800 mb-4">Quick Start</h2>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
-          {(Object.keys(domainIcons) as Domain[]).map((domain) => {
+          {(Object.keys(domainIcons) as Domain[]).map((domain, index) => {
             const Icon = domainIcons[domain];
             const color = getDomainColor(domain);
             return (
               <motion.button
                 key={domain}
-                whileHover={{ scale: 1.05 }}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: index * 0.05 }}
+                whileHover={{ scale: 1.05, y: -4 }}
                 whileTap={{ scale: 0.95 }}
                 onClick={() => setSelectedDomain(domain)}
-                className="bg-white rounded-lg shadow p-4 sm:p-6 text-center hover:shadow-lg transition-all group min-h-[100px] sm:min-h-[120px]"
+                className="bg-white/80 backdrop-blur-sm rounded-xl shadow-md hover:shadow-xl p-4 sm:p-6 text-center transition-all duration-300 group min-h-[100px] sm:min-h-[120px] border border-gray-100"
               >
-                <div
-                  className="w-10 h-10 sm:w-12 sm:h-12 mx-auto rounded-full flex items-center justify-center mb-2 sm:mb-3 group-hover:scale-110 transition-transform"
+                <motion.div
+                  className="w-10 h-10 sm:w-12 sm:h-12 mx-auto rounded-xl flex items-center justify-center mb-2 sm:mb-3 shadow-sm"
                   style={{ backgroundColor: `${color}20` }}
+                  whileHover={{ rotate: 10, scale: 1.1 }}
+                  transition={{ type: "spring", stiffness: 400, damping: 10 }}
                 >
                   <Icon size={20} className="sm:w-6 sm:h-6" style={{ color }} />
-                </div>
+                </motion.div>
                 <div className="font-semibold text-gray-800 text-sm sm:text-base">{domain}</div>
-                <div className="text-xs text-gray-500 mt-1">View Tasks</div>
+                <div className="text-xs text-gray-500 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">View Tasks</div>
               </motion.button>
             );
           })}
@@ -451,46 +524,58 @@ export const Dashboard = ({ onStartTask, currentEnergy, onEnergyChange, onNaviga
                 key={task.id}
                 initial={{ opacity: 0, x: -20 }}
                 animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: index * 0.1 }}
-                className="bg-white rounded-lg shadow p-4 hover:shadow-md transition-all border-l-4"
+                transition={{ delay: index * 0.08 }}
+                whileHover={{ scale: 1.01, x: 4 }}
+                className="bg-white/90 backdrop-blur-sm rounded-xl shadow-md hover:shadow-lg p-4 transition-all duration-300 border-l-4 group"
                 style={{ borderLeftColor: domainColor }}
               >
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-2 flex-wrap">
-                      <span
-                        className="inline-block px-2 py-1 rounded text-xs font-medium text-white"
+                      <motion.span
+                        className="inline-block px-3 py-1 rounded-lg text-xs font-semibold text-white shadow-sm"
                         style={{ backgroundColor: domainColor }}
+                        whileHover={{ scale: 1.05 }}
                       >
                         {task.domain}
-                      </span>
-                      <span className="text-xs text-gray-500">{task.estimateMins} min</span>
-                      <span className="text-xs text-gray-500">
+                      </motion.span>
+                      <span className="text-xs text-gray-600 font-medium bg-gray-100 px-2 py-1 rounded">{task.estimateMins} min</span>
+                      <span className="text-xs text-gray-600 font-medium bg-gray-100 px-2 py-1 rounded">
                         {energyEmojis[task.energy]} {task.energy}
                       </span>
                       {task.priority === 'High' && (
-                        <span className="text-xs text-red-500 font-semibold">High Priority</span>
+                        <motion.span
+                          className="text-xs text-red-600 font-bold bg-red-50 px-2 py-1 rounded"
+                          animate={{ scale: [1, 1.05, 1] }}
+                          transition={{ duration: 2, repeat: Infinity }}
+                        >
+                          High Priority
+                        </motion.span>
                       )}
                     </div>
-                    <h3 className="font-semibold text-gray-800 text-base sm:text-lg">{task.title}</h3>
+                    <h3 className="font-semibold text-gray-800 text-base sm:text-lg group-hover:text-gray-900 transition-colors">{sanitizeText(task.title)}</h3>
                     {task.notes && (
-                      <p className="text-sm text-gray-600 mt-1 line-clamp-1">{task.notes}</p>
+                      <p className="text-sm text-gray-600 mt-1 line-clamp-1">{sanitizeText(task.notes)}</p>
                     )}
                   </div>
                   <div className="flex gap-2 sm:ml-4">
-                    <button
+                    <motion.button
+                      whileHover={{ scale: 1.05 }}
+                      whileTap={{ scale: 0.95 }}
                       onClick={() => onStartTask(task, 30)}
-                      className="flex-1 sm:flex-none px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm font-medium transition-all min-h-[44px]"
+                      className="flex-1 sm:flex-none px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm font-semibold transition-all min-h-[44px] shadow-sm"
                     >
                       30 min
-                    </button>
-                    <button
+                    </motion.button>
+                    <motion.button
+                      whileHover={{ scale: 1.05, boxShadow: "0 10px 20px rgba(0,0,0,0.15)" }}
+                      whileTap={{ scale: 0.95 }}
                       onClick={() => onStartTask(task, 60)}
-                      className="flex-1 sm:flex-none px-4 py-2 text-white rounded-lg text-sm font-medium transition-all hover:scale-105 min-h-[44px]"
+                      className="flex-1 sm:flex-none px-4 py-2 text-white rounded-lg text-sm font-semibold transition-all min-h-[44px] shadow-md"
                       style={{ backgroundColor: domainColor }}
                     >
                       60 min
-                    </button>
+                    </motion.button>
                   </div>
                 </div>
               </motion.div>
@@ -498,10 +583,14 @@ export const Dashboard = ({ onStartTask, currentEnergy, onEnergyChange, onNaviga
           })}
 
           {recommendedTasks.length === 0 && (
-            <div className="text-center py-12 text-gray-500">
-              <p className="text-lg">No tasks available right now.</p>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="text-center py-12 text-gray-500 bg-white/50 rounded-xl"
+            >
+              <p className="text-lg font-medium">No tasks available right now.</p>
               <p className="text-sm mt-2">Add some tasks to get started!</p>
-            </div>
+            </motion.div>
           )}
         </div>
       </div>

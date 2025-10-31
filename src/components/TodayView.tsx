@@ -187,7 +187,12 @@ export const TodayView = ({ onStartTask }: TodayViewProps) => {
           // Run cleanup immediately to delete if retention is 0
           const prefs = await db.userPrefs.get(1);
           if (prefs && prefs.archiveRetentionDays === 0) {
-            await db.tasks.delete(plannedTask.taskId);
+            // Cascade delete with sessions and daily plans
+            await db.transaction('rw', [db.tasks, db.sessions, db.dailyPlanTasks], async () => {
+              await db.sessions.where('taskId').equals(plannedTask.taskId).delete();
+              await db.dailyPlanTasks.where('taskId').equals(plannedTask.taskId).delete();
+              await db.tasks.delete(plannedTask.taskId);
+            });
           }
         } else {
           // Recurring task: update lastCompletedAt, clear assignment, stays in todo

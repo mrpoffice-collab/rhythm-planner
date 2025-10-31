@@ -2,7 +2,18 @@
   "permissions": {
     "allow": [
       "Bash(npm run dev:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(echo:*)",
+      "Bash(cat:*)",
+      "Bash(npm install:*)",
+      "Bash(dir:*)",
+      "Bash(npx pwa-asset-generator:*)",
+      "Bash(copy manifest-icon-192.png pwa-192x192.png)",
+      "Bash(copy manifest-icon-512.png pwa-512x512.png)",
+      "Bash(copy apple-icon-180.png apple-touch-icon.png)",
+      "Bash(npm run build:*)",
+      "Bash(npm run preview:*)"
     ],
     "deny": [],
     "ask": []
